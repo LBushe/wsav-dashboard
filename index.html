@@ -705,13 +705,22 @@
         // ============================================================================
 
         const EXCEL_URL = 'https://workspaceav1.sharepoint.com/:x:/g/IQCj5OJBWqS6Sbi4P1Jce39nAV0jgrgcrbSHG6KxNN-1x8I?e=VT6JLL&download=1';
+        const CORS_PROXY = 'https://corsproxy.io/?url=';
 
         async function loadExcelFromSharePoint() {
             try {
                 // Show loading state
                 document.getElementById('loading-indicator').style.display = 'flex';
-                
-                const response = await fetch(EXCEL_URL);
+
+                // Try direct fetch first, then CORS proxy if blocked
+                let response;
+                try {
+                    response = await fetch(EXCEL_URL);
+                } catch (directErr) {
+                    // Direct fetch failed (likely CORS), try via proxy
+                    const proxyUrl = CORS_PROXY + encodeURIComponent(EXCEL_URL);
+                    response = await fetch(proxyUrl);
+                }
                 if (!response.ok) throw new Error(`Failed to fetch Excel file: ${response.status}`);
                 
                 const arrayBuffer = await response.arrayBuffer();
