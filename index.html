@@ -890,9 +890,24 @@
                 const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
 
                 // Safe date parser — returns YYYY-MM-DD or null if invalid
+                // Handles DD/MM/YY, DD/MM/YYYY, and ISO formats
                 function safeDate(val) {
                     if (!val) return null;
-                    const d = new Date(val);
+                    const s = val.toString().trim();
+                    // Match DD/MM/YY or DD/MM/YYYY
+                    const dmyMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+                    if (dmyMatch) {
+                        const day = parseInt(dmyMatch[1]);
+                        const month = parseInt(dmyMatch[2]);
+                        let year = parseInt(dmyMatch[3]);
+                        if (year < 100) year = year < 50 ? 2000 + year : 1900 + year;
+                        if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+                        const mm = month.toString().padStart(2, '0');
+                        const dd = day.toString().padStart(2, '0');
+                        return year + '-' + mm + '-' + dd;
+                    }
+                    // Fallback for other formats (ISO, etc.)
+                    const d = new Date(s);
                     if (isNaN(d.getTime())) return null;
                     return d.toISOString().split('T')[0];
                 }
