@@ -897,10 +897,22 @@
                     return d.toISOString().split('T')[0];
                 }
 
+                // Trim whitespace from all column names in a row
+                function trimKeys(row) {
+                    const out = {};
+                    for (const key in row) out[key.trim()] = row[key];
+                    return out;
+                }
+
+                // Helper: parse sheet to JSON with trimmed column names
+                function parseSheet(sheet) {
+                    return XLSX.utils.sheet_to_json(sheet, { raw: false }).map(trimKeys);
+                }
+
                 // Parse SOW sheet (OBJ003 - SOW)
                 const sowSheet = workbook.Sheets['OBJ003 - SOW'];
                 if (sowSheet) {
-                    const rawData = XLSX.utils.sheet_to_json(sowSheet, { raw: false });
+                    const rawData = parseSheet(sowSheet);
                     sowData.length = 0;
                     rawData.forEach(row => {
                         const date = row['Date'];
@@ -920,7 +932,7 @@
                 // Parse RAMS sheet (OBJ002 - RAMS)
                 const ramsSheet = workbook.Sheets['OBJ002 - RAMS'];
                 if (ramsSheet) {
-                    const rawData = XLSX.utils.sheet_to_json(ramsSheet, { raw: false });
+                    const rawData = parseSheet(ramsSheet);
                     ramsData.length = 0;
                     rawData.forEach(row => {
                         const date = row['Date'];
@@ -939,7 +951,7 @@
                 // Parse Drawings sheet (OBJ008 - DRAWINGS)
                 const drawingsSheet = workbook.Sheets['OBJ008 - DRAWINGS'];
                 if (drawingsSheet) {
-                    const rawData = XLSX.utils.sheet_to_json(drawingsSheet, { raw: false });
+                    const rawData = parseSheet(drawingsSheet);
                     drawingsData.length = 0;
                     rawData.forEach(row => {
                         const date = row['Date'];
@@ -958,7 +970,7 @@
                 // Parse Goods In/Out sheet (OBJ007 - GOODINOUT)
                 const goodsSheet = workbook.Sheets['OBJ007 - GOODINOUT'];
                 if (goodsSheet) {
-                    const rawData = XLSX.utils.sheet_to_json(goodsSheet, { raw: false });
+                    const rawData = parseSheet(goodsSheet);
                     goodsInOutData.length = 0;
                     rawData.forEach(row => {
                         const date = row['Date'];
@@ -977,7 +989,7 @@
                 // Parse Ticket Resolution sheet (OBJ001 - TICKETRES)
                 const ticketsSheet = workbook.Sheets['OBJ001 - TICKETRES'];
                 if (ticketsSheet) {
-                    const rawData = XLSX.utils.sheet_to_json(ticketsSheet, { raw: false });
+                    const rawData = parseSheet(ticketsSheet);
                     ticketResolutionData.length = 0;
                     rawData.forEach(row => {
                         const date = row['Date'];
@@ -996,7 +1008,7 @@
                 // Parse Second Life sheet (OBJ004 - 2NDLIFE)
                 const secondLifeSheet = workbook.Sheets['OBJ004 - 2NDLIFE'];
                 if (secondLifeSheet) {
-                    const rawData = XLSX.utils.sheet_to_json(secondLifeSheet, { raw: false });
+                    const rawData = parseSheet(secondLifeSheet);
                     secondLifeData.length = 0;
                     rawData.forEach(row => {
                         const date = row['Date'];
@@ -1015,7 +1027,7 @@
                 // Parse Close Out sheet (OBJ009 - CLOSEOUT)
                 const closeOutSheet = workbook.Sheets['OBJ009 -CLOSEOUT'];
                 if (closeOutSheet) {
-                    const rawData = XLSX.utils.sheet_to_json(closeOutSheet, { raw: false });
+                    const rawData = parseSheet(closeOutSheet);
                     closeOutData.length = 0;
                     rawData.forEach(row => {
                         const date = row['Date'];
@@ -1034,15 +1046,27 @@
                 // Parse Power Consumption sheet (OBJ005 - POWERCONSUMP)
                 const powerSheet = workbook.Sheets['OBJ005 - POWERCONSUMP'];
                 if (powerSheet) {
-                    const rawData = XLSX.utils.sheet_to_json(powerSheet, { raw: false });
-                    // Clear and rebuild power consumption object
+                    const rawData = parseSheet(powerSheet);
                     for (let key in powerConsumptionData) delete powerConsumptionData[key];
                     rawData.forEach(row => {
-                        const month = row['Month'];
-                        const kWh = parseFloat(row['kWh Used']) || 0;
-                        if (month) {
-                            // Assume month is in YYYY-MM format
-                            powerConsumptionData[month] = kWh;
+                        // "Month" column is DD-MM-YY (e.g. "30-11-25") — convert to YYYY-MM
+                        const rawMonth = row['Month'];
+                        const kWh = parseFloat((row['kWh Used'] || '').replace(/,/g, '')) || 0;
+                        if (rawMonth && kWh) {
+                            // Try parsing DD-MM-YY
+                            const parts = rawMonth.split('-');
+                            if (parts.length === 3) {
+                                const yy = parseInt(parts[2]);
+                                const mm = parts[1];
+                                const yyyy = yy < 50 ? 2000 + yy : 1900 + yy;
+                                powerConsumptionData[yyyy + '-' + mm] = kWh;
+                            } else {
+                                // Fallback: try End Date column
+                                const endDate = safeDate(row['End Date']);
+                                if (endDate) {
+                                    powerConsumptionData[endDate.substring(0, 7)] = kWh;
+                                }
+                            }
                         }
                     });
                 }
@@ -1051,33 +1075,50 @@
                 const hsSheet = workbook.Sheets['OBJ - H&S STATS'];
                 if (hsSheet) {
                     const allData = XLSX.utils.sheet_to_json(hsSheet, { header: 1, raw: false });
+
+                    // Convert "Mar 2026" → "2026-03"
+                    const monthAbbr = { Jan:'01', Feb:'02', Mar:'03', Apr:'04', May:'05', Jun:'06',
+                                        Jul:'07', Aug:'08', Sep:'09', Oct:'10', Nov:'11', Dec:'12' };
+                    function parseHsMonth(val) {
+                        if (!val) return null;
+                        const m = val.match(/^([A-Za-z]{3})\s+(\d{4})$/);
+                        if (m && monthAbbr[m[1]]) return m[2] + '-' + monthAbbr[m[1]];
+                        return null;
+                    }
+                    // Parse number with commas (e.g. "5,280" → 5280)
+                    function pInt(v) { return parseInt((v || '').toString().replace(/,/g, '')) || 0; }
+                    function pFloat(v) { return parseFloat((v || '').toString().replace(/,/g, '')) || 0.00; }
+
                     // Headers are in row 2 (0-indexed), data starts at row 3
                     if (allData.length > 2) {
-                        const headers = allData[2];
-                        // Clear and rebuild health safety data object
                         for (let key in healthSafetyData) delete healthSafetyData[key];
-                        
+
                         for (let i = 3; i < allData.length; i++) {
                             const row = allData[i];
-                            if (!row[0]) continue; // Skip empty rows
-                            
-                            const month = row[0]; // Month column
-                            healthSafetyData[month] = {
-                                accidents: parseInt(row[1]) || 0,
-                                lta: parseInt(row[2]) || 0,
-                                nearMisses: parseInt(row[3]) || 0,
-                                employees: parseInt(row[4]) || 0,
-                                workingDays: parseInt(row[5]) || 0,
-                                standardHours: parseInt(row[6]) || 0,
-                                overtime: parseInt(row[7]) || 0,
-                                holiday: parseInt(row[8]) || 0,
-                                sickness: parseInt(row[9]) || 0,
-                                manHours: parseInt(row[10]) || 0,
-                                ytdManHours: parseInt(row[11]) || 0,
-                                daysLost: parseInt(row[12]) || 0,
-                                riddors: parseInt(row[13]) || 0,
-                                afr: parseFloat(row[14]) || 0.00,
-                                ltir: parseFloat(row[15]) || 0.00
+                            if (!row[0]) continue;
+
+                            const monthKey = parseHsMonth(row[0]);
+                            if (!monthKey) continue;
+
+                            // Only store if there's actual data (at least employees filled in)
+                            if (!row[4] && !row[1]) continue;
+
+                            healthSafetyData[monthKey] = {
+                                accidents: pInt(row[1]),
+                                lta: pInt(row[2]),
+                                nearMisses: pInt(row[3]),
+                                employees: pInt(row[4]),
+                                workingDays: pInt(row[5]),
+                                standardHours: pInt(row[6]),
+                                overtime: pInt(row[7]),
+                                holiday: pInt(row[8]),
+                                sickness: pInt(row[9]),
+                                manHours: pInt(row[10]),
+                                ytdManHours: pInt(row[11]),
+                                daysLost: pInt(row[12]),
+                                riddors: pInt(row[13]),
+                                afr: pFloat(row[14]),
+                                ltir: pFloat(row[15])
                             };
                         }
                     }
@@ -1096,6 +1137,8 @@
                 console.log('Excel loaded. Sheets:', workbook.SheetNames);
                 console.log('CloseOut rows:', closeOutData.length, closeOutData.slice(0, 3));
                 console.log('SOW rows:', sowData.length, 'RAMS rows:', ramsData.length);
+                console.log('Power keys:', Object.keys(powerConsumptionData));
+                console.log('H&S keys:', Object.keys(healthSafetyData));
 
                 // Refresh all dashboard views
                 refreshAllDashboards();
@@ -1897,8 +1940,13 @@
         function renderPowerConsumptionChart() {
             const ctx = document.getElementById('power-consumption-chart').getContext('2d');
 
-            const months = ['Nov 2025', 'Dec 2025', 'Jan 2026'];
-            const monthKeys = ['2025-11', '2025-12', '2026-01'];
+            // Dynamically build from whatever months are in the data
+            const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const monthKeys = Object.keys(powerConsumptionData).sort();
+            const months = monthKeys.map(k => {
+                const [y, m] = k.split('-');
+                return monthNames[parseInt(m) - 1] + ' ' + y;
+            });
             const usage = monthKeys.map(k => powerConsumptionData[k] || 0);
 
             if (powerConsumptionChart) {
