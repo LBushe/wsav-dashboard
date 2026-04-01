@@ -790,18 +790,9 @@
             });
         }
 
-        async function signIn() {
-            try {
-                const response = await msalInstance.loginPopup(loginRequest);
-                msalAccount = response.account;
-                onSignedIn();
-            } catch (err) {
-                console.error('Sign-in error:', err);
-                // If popup blocked, try redirect
-                if (err.errorCode === 'popup_window_error' || err.errorCode === 'empty_window_error') {
-                    msalInstance.loginRedirect(loginRequest);
-                }
-            }
+        function signIn() {
+            // Use redirect flow — more reliable than popup in corporate environments
+            msalInstance.loginRedirect(loginRequest);
         }
 
         function onSignedIn() {
@@ -826,9 +817,9 @@
                 const response = await msalInstance.acquireTokenSilent(tokenRequest);
                 return response.accessToken;
             } catch (err) {
-                // If silent fails, try popup
-                const response = await msalInstance.acquireTokenPopup(tokenRequest);
-                return response.accessToken;
+                // If silent fails, redirect to re-authenticate
+                msalInstance.acquireTokenRedirect(tokenRequest);
+                return null;
             }
         }
 
