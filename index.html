@@ -680,9 +680,6 @@
                         <canvas id="second-life-chart"></canvas>
                     </div>
                 </div>
-            </div>
-
-            <div class="charts-grid">
                 <div class="chart-container">
                     <div class="chart-title">Monthly Water Usage (m³)</div>
                     <div class="chart-wrapper">
@@ -1763,14 +1760,33 @@
         function renderComplianceTrendChart() {
             const ctx = document.getElementById('compliance-trend-chart').getContext('2d');
 
-            const months = ['Oct 2025', 'Nov 2025', 'Dec 2025', 'Jan 2026', 'Feb 2026', 'Mar 2026'];
-            const monthKeys = ['2025-10', '2025-11', '2025-12', '2026-01', '2026-02', '2026-03'];
+            // Build month list dynamically from all quality datasets
+            const monthNamesShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const monthSet = new Set();
+            [sowData, ramsData, drawingsData, goodsInOutData, closeOutData].forEach(dataset => {
+                dataset.forEach(item => {
+                    if (item.date) monthSet.add(item.date.substring(0, 7));
+                });
+            });
+            const monthKeys = Array.from(monthSet).sort();
+            const months = monthKeys.map(k => {
+                const [y, m] = k.split('-');
+                return monthNamesShort[parseInt(m) - 1] + ' ' + y;
+            });
 
-            const rams = [44.4, 61.1, 65.0, 87.0, 95.2, 91.7];
-            const sow = [83.3, 100, 100, 100, 93.8, 100];
-            const drawings = [0, 0, 0, 63.6, 85.7, 80.0];
-            const goods = [0, 0, 0, 0, 77.8, 77.8];
-            const closeOut = [0, 0, 0, 0, 0, 0];
+            // Calculate compliance % for each month dynamically
+            const calcPct = (data, mk) => {
+                const filtered = filterDataByMonth(data, mk);
+                if (filtered.length === 0) return 0;
+                const yesCount = filtered.filter(d => (d.status || '').toLowerCase() === 'yes').length;
+                return parseFloat(((yesCount / filtered.length) * 100).toFixed(1));
+            };
+
+            const rams = monthKeys.map(mk => calcPct(ramsData, mk));
+            const sow = monthKeys.map(mk => calcPct(sowData, mk));
+            const drawings = monthKeys.map(mk => calcPct(drawingsData, mk));
+            const goods = monthKeys.map(mk => calcPct(goodsInOutData, mk));
+            const closeOut = monthKeys.map(mk => calcPct(closeOutData, mk));
 
             if (complianceChart) {
                 complianceChart.destroy();
