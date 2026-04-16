@@ -618,12 +618,6 @@
                 <label for="month-selector-q1" style="color: var(--gold); font-weight: 600;">Select Month:</label>
                 <select id="month-selector-q1" class="month-selector">
                     <option value="">All Months</option>
-                    <option value="2025-10">October 2025</option>
-                    <option value="2025-11">November 2025</option>
-                    <option value="2025-12">December 2025</option>
-                    <option value="2026-01">January 2026</option>
-                    <option value="2026-02">February 2026</option>
-                    <option value="2026-03">March 2026</option>
                 </select>
             </div>
 
@@ -666,12 +660,6 @@
                 <label for="month-selector-s" style="color: var(--gold); font-weight: 600;">Select Month:</label>
                 <select id="month-selector-s" class="month-selector">
                     <option value="">All Months</option>
-                    <option value="2025-10">October 2025</option>
-                    <option value="2025-11">November 2025</option>
-                    <option value="2025-12">December 2025</option>
-                    <option value="2026-01">January 2026</option>
-                    <option value="2026-02">February 2026</option>
-                    <option value="2026-03">March 2026</option>
                 </select>
             </div>
 
@@ -690,6 +678,15 @@
                     <div class="chart-title">2nd Life Projects by Month</div>
                     <div class="chart-wrapper">
                         <canvas id="second-life-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="charts-grid">
+                <div class="chart-container">
+                    <div class="chart-title">Monthly Water Usage (m³)</div>
+                    <div class="chart-wrapper">
+                        <canvas id="water-usage-chart"></canvas>
                     </div>
                 </div>
             </div>
@@ -723,7 +720,6 @@
                 <label for="month-selector-h" style="color: var(--gold); font-weight: 600;">Select Month:</label>
                 <select id="month-selector-h" class="month-selector">
                     <option value="">All Months</option>
-                    <option value="2026-03">March 2026</option>
                 </select>
             </div>
 
@@ -1055,24 +1051,50 @@
                     const rawData = parseSheet(powerSheet);
                     for (let key in powerConsumptionData) delete powerConsumptionData[key];
                     rawData.forEach(row => {
-                        // "Month" column is DD-MM-YY (e.g. "30-11-25") — convert to YYYY-MM
+                        // "Month" column could be DD/MM/YYYY, DD-MM-YY, etc.
                         const rawMonth = row['Month'];
                         const kWh = parseFloat((row['kWh Used'] || '').replace(/,/g, '')) || 0;
                         if (rawMonth && kWh) {
-                            // Try parsing DD-MM-YY
-                            const parts = rawMonth.split('-');
-                            if (parts.length === 3) {
-                                const yy = parseInt(parts[2]);
-                                const mm = parts[1];
-                                const yyyy = yy < 50 ? 2000 + yy : 1900 + yy;
-                                powerConsumptionData[yyyy + '-' + mm] = kWh;
-                            } else {
-                                // Fallback: try End Date column
-                                const endDate = safeDate(row['End Date']);
-                                if (endDate) {
-                                    powerConsumptionData[endDate.substring(0, 7)] = kWh;
+                            // Use safeDate to parse (handles DD/MM/YYYY and DD-MM-YY)
+                            const parsed = safeDate(rawMonth);
+                            if (parsed) {
+                                powerConsumptionData[parsed.substring(0, 7)] = kWh;
+                            }
+                        }
+                    });
+                }
+
+                // Parse Water Usage sheet (OBJ010 -WATER)
+                const waterSheet = workbook.Sheets['OBJ010 -WATER'];
+                if (waterSheet) {
+                    const rawData = parseSheet(waterSheet);
+                    for (let key in waterUsageData) delete waterUsageData[key];
+                    rawData.forEach(row => {
+                        const usage = parseFloat((row['Usage m³'] || row['Usage m3'] || '').toString().replace(/,/g, '')) || 0;
+                        // Try End Date first, then Start Date to determine month
+                        let monthKey = null;
+                        const endDate = safeDate(row['End Date']);
+                        const startDate = safeDate(row['Start Date']);
+                        if (endDate) {
+                            monthKey = endDate.substring(0, 7);
+                        } else if (startDate) {
+                            monthKey = startDate.substring(0, 7);
+                        }
+                        // If safeDate failed (US format dates), try parsing M/D/YY manually
+                        if (!monthKey) {
+                            const raw = row['End Date'] || row['Start Date'] || '';
+                            const usMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+                            if (usMatch) {
+                                let month = parseInt(usMatch[1]);
+                                let year = parseInt(usMatch[3]);
+                                if (year < 100) year = year < 50 ? 2000 + year : 1900 + year;
+                                if (month >= 1 && month <= 12) {
+                                    monthKey = year + '-' + month.toString().padStart(2, '0');
                                 }
                             }
+                        }
+                        if (monthKey && usage) {
+                            waterUsageData[monthKey] = usage;
                         }
                     });
                 }
@@ -1164,8 +1186,11 @@
         }
 
         function refreshAllDashboards() {
+            // Populate month dropdowns dynamically from loaded data
+            populateMonthSelectors();
+
             const activeTab = document.querySelector('.tab-button.active')?.dataset.tab || 'quality';
-            
+
             if (activeTab === 'quality') {
                 const monthSelector = document.getElementById('month-selector-q1');
                 renderQualityKPIs(monthSelector ? monthSelector.value : '');
@@ -1173,9 +1198,13 @@
             } else if (activeTab === 'health') {
                 const monthSelector = document.getElementById('month-selector-h');
                 renderHealthSafetyKPIs(monthSelector ? monthSelector.value : '');
+                renderManHoursChart();
             } else if (activeTab === 'sustainability') {
                 const monthSelector = document.getElementById('month-selector-s');
                 renderSustainabilityKPIs(monthSelector ? monthSelector.value : '');
+                renderPowerConsumptionChart();
+                renderSecondLifeChart();
+                renderWaterUsageChart();
             }
         }
 
@@ -1539,6 +1568,8 @@
             "2026-01": 6415.6
         };
 
+        let waterUsageData = {};
+
         let healthSafetyData = {
             "2026-03": {
                 accidents: 0,
@@ -1727,6 +1758,7 @@
         let manHoursChart = null;
         let powerConsumptionChart = null;
         let secondLifeChart = null;
+        let waterUsageChart = null;
 
         function renderComplianceTrendChart() {
             const ctx = document.getElementById('compliance-trend-chart').getContext('2d');
@@ -2012,8 +2044,16 @@
         function renderSecondLifeChart() {
             const ctx = document.getElementById('second-life-chart').getContext('2d');
 
-            const allMonths = ['2025-10', '2025-11', '2025-12', '2026-01', '2026-02', '2026-03'];
-            const monthLabels = ['Oct 2025', 'Nov 2025', 'Dec 2025', 'Jan 2026', 'Feb 2026', 'Mar 2026'];
+            const monthNamesShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const monthSet = new Set();
+            secondLifeData.forEach(item => {
+                if (item.date) monthSet.add(item.date.substring(0, 7));
+            });
+            const allMonths = Array.from(monthSet).sort();
+            const monthLabels = allMonths.map(k => {
+                const [y, m] = k.split('-');
+                return monthNamesShort[parseInt(m) - 1] + ' ' + y;
+            });
 
             const counts = allMonths.map(month => {
                 return filterDataByMonth(secondLifeData, month).length;
@@ -2076,6 +2116,130 @@
             });
         }
 
+        function renderWaterUsageChart() {
+            const ctx = document.getElementById('water-usage-chart');
+            if (!ctx) return;
+
+            const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const monthKeys = Object.keys(waterUsageData).sort();
+            const labels = monthKeys.map(k => {
+                const [y, m] = k.split('-');
+                return monthNames[parseInt(m) - 1] + ' ' + y;
+            });
+            const usage = monthKeys.map(k => waterUsageData[k] || 0);
+
+            if (waterUsageChart) {
+                waterUsageChart.destroy();
+            }
+
+            waterUsageChart = new Chart(ctx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Water Usage (m³)',
+                        data: usage,
+                        backgroundColor: '#4FC3F7',
+                        borderColor: '#81D4FA',
+                        borderWidth: 2,
+                        borderRadius: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#F2EEE7',
+                                font: { size: 12, weight: '600' }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                color: '#F2EEE7',
+                                font: { size: 12 }
+                            },
+                            grid: {
+                                color: 'rgba(221, 179, 87, 0.1)'
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                color: '#F2EEE7',
+                                font: { size: 12 }
+                            },
+                            grid: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // ============================================================================
+        // DYNAMIC MONTH SELECTORS
+        // ============================================================================
+
+        function populateMonthSelectors() {
+            const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+            // Collect all unique months from all datasets
+            const allMonths = new Set();
+
+            // Quality tab data
+            [sowData, ramsData, drawingsData, goodsInOutData, closeOutData, ticketResolutionData, secondLifeData].forEach(dataset => {
+                dataset.forEach(item => {
+                    if (item.date) {
+                        const m = item.date.substring(0, 7); // "YYYY-MM"
+                        if (m && m.length === 7) allMonths.add(m);
+                    }
+                });
+            });
+
+            // Power consumption and water months
+            Object.keys(powerConsumptionData).forEach(k => allMonths.add(k));
+            Object.keys(waterUsageData).forEach(k => allMonths.add(k));
+
+            // H&S months
+            Object.keys(healthSafetyData).forEach(k => allMonths.add(k));
+
+            // Sort chronologically
+            const sorted = Array.from(allMonths).sort();
+
+            // Populate each dropdown
+            ['month-selector-q1', 'month-selector-s', 'month-selector-h'].forEach(id => {
+                const select = document.getElementById(id);
+                if (!select) return;
+
+                // Remember current selection
+                const current = select.value;
+
+                // Clear existing options except "All Months"
+                select.innerHTML = '<option value="">All Months</option>';
+
+                sorted.forEach(mk => {
+                    const [y, m] = mk.split('-');
+                    const label = monthNames[parseInt(m) - 1] + ' ' + y;
+                    const opt = document.createElement('option');
+                    opt.value = mk;
+                    opt.textContent = label;
+                    select.appendChild(opt);
+                });
+
+                // Restore selection if still valid
+                if (current && sorted.includes(current)) {
+                    select.value = current;
+                }
+            });
+
+            console.log('Month selectors populated with', sorted.length, 'months:', sorted);
+        }
+
         // ============================================================================
         // HEALTH & SAFETY TAB
         // ============================================================================
@@ -2125,7 +2289,8 @@
                 { label: 'Total kWh Usage', value: totalKwh.toFixed(0), unit: '' },
                 { label: 'Monthly kWh', value: monthlyKwh.toFixed(0), unit: '' },
                 { label: '2nd Life Projects', value: secondLifeCount, unit: '' },
-                { label: 'Water Usage', value: 'Coming Soon', unit: '', isPlaceholder: true }
+                { label: 'Total Water (m³)', value: Object.values(waterUsageData).reduce((a, b) => a + b, 0).toFixed(1), unit: '' },
+                { label: 'Monthly Water (m³)', value: (monthKey && waterUsageData[monthKey] ? waterUsageData[monthKey].toFixed(1) : '0'), unit: '' }
             ];
 
             container.innerHTML = kpis.map(kpi => `
@@ -2187,6 +2352,7 @@
                 renderSustainabilityKPIs(monthSelect.value);
                 renderPowerConsumptionChart();
                 renderSecondLifeChart();
+                renderWaterUsageChart();
             }
         }
 
