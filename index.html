@@ -910,6 +910,12 @@
             </div>
 
             <div class="chart-container">
+                <div class="chart-title">Safety &amp; Hours Trend</div>
+                <div class="chart-scope" id="hs-trend-scope"></div>
+                <div class="sm-grid" id="hs-trend-panels"></div>
+            </div>
+
+            <div class="chart-container">
                 <div class="chart-title" id="man-hours-title">Man Hours Breakdown</div>
                 <div class="chart-wrapper">
                     <canvas id="man-hours-chart"></canvas>
@@ -1474,6 +1480,7 @@
             } else if (activeTab === 'health') {
                 const monthSelector = document.getElementById('month-selector-h');
                 renderHealthSafetyKPIs(monthSelector ? monthSelector.value : '');
+                renderHsTrendPanels();
                 renderManHoursChart(document.getElementById('month-selector-h') ? document.getElementById('month-selector-h').value : '');
             } else if (activeTab === 'sustainability') {
                 const monthSelector = document.getElementById('month-selector-s');
@@ -2041,6 +2048,111 @@
                 HM_RAMP.map(c => '<i style="background:' + c + '"></i>').join('') +
                 '<span>100%</span><span style="margin-left:12px">&mdash; = no rows recorded</span></div>';
             host.innerHTML = html;
+        }
+
+        // ---- H&S trend panels ------------------------------------------------------
+        // Small multiples over the selected Chart Range, matching the Quality tab's Panels
+        // view. Added because the H&S tab previously held only a single-month breakdown, so
+        // the Chart Range control on that tab governed nothing at all — and 43 months of
+        // history could only be read one month at a time.
+        let hsTrendCharts = [];
+        const HS_TREND_SERIES = [
+            { key: 'manHours',   label: 'Man Hours Worked', fmt: v => v.toLocaleString(), total: true },
+            { key: 'accidents',  label: 'Total Accidents',  fmt: v => v,                  total: true },
+            { key: 'nearMisses', label: 'Near Misses',      fmt: v => v,                  total: true },
+            { key: 'afr',        label: 'Accident Frequency Rate', fmt: v => v.toFixed(2), total: false }
+        ];
+
+        function renderHsTrendPanels() {
+            const grid = document.getElementById('hs-trend-panels');
+            const scope = document.getElementById('hs-trend-scope');
+            if (!grid) return;
+
+            hsTrendCharts.forEach(c => c.destroy());
+            hsTrendCharts = [];
+
+            const all = monthsForTab('h');
+            const months = monthsInRange('h', all);
+
+            if (scope) scope.textContent = months.length ? 'Showing ' + rangeCaption('h', all) : '';
+
+            if (!months.length) {
+                grid.innerHTML = '<div style="grid-column:1/-1">' +
+                    emptyStateHTML('Health &amp; safety history loads from the tracker once you sign in.') + '</div>';
+                return;
+            }
+
+            grid.innerHTML = HS_TREND_SERIES.map((sr, i) => {
+                const values = months.map(mk => {
+                    const row = healthSafetyData[mk];
+                    return row ? (row[sr.key] || 0) : null;
+                });
+                const known = values.filter(v => v !== null);
+
+                // Counts sum across the range; rates are recalculated from the totals rather
+                // than averaged, for the same reason as the KPI cards.
+                let headline;
+                if (!known.length) {
+                    headline = '&mdash;';
+                } else if (sr.total) {
+                    headline = sr.fmt(known.reduce((a, b) => a + b, 0));
+                } else {
+                    const totAcc = months.reduce((t, mk) => t + ((healthSafetyData[mk] || {}).accidents || 0), 0);
+                    const totHrs = months.reduce((t, mk) => t + ((healthSafetyData[mk] || {}).manHours || 0), 0);
+                    headline = sr.fmt(totHrs ? (totAcc * 100000) / totHrs : 0);
+                }
+
+                return '<div class="sm-card">' +
+                    '<div class="sm-top"><div><div class="sm-name">' + sr.label + '</div>' +
+                    '<div class="sm-sub">' + (sr.total ? 'total over ' : 'across ') + months.length + ' months</div></div>' +
+                    '<div class="sm-val">' + headline + '</div></div>' +
+                    '<div class="sm-chart"><canvas id="hs-trend-' + i + '"></canvas></div></div>';
+            }).join('');
+
+            HS_TREND_SERIES.forEach((sr, i) => {
+                const el = document.getElementById('hs-trend-' + i);
+                if (!el) return;
+                const values = months.map(mk => {
+                    const row = healthSafetyData[mk];
+                    return row ? (row[sr.key] || 0) : null;
+                });
+                // Counts are bars (discrete monthly totals); the rate is a line (a trend).
+                hsTrendCharts.push(new Chart(el.getContext('2d'), {
+                    type: sr.total ? 'bar' : 'line',
+                    data: {
+                        labels: months.map(mk => monthLabel(mk, true)),
+                        datasets: [{
+                            data: values,
+                            borderColor: '#DDB357',
+                            backgroundColor: sr.total ? '#DDB357' : 'rgba(221,179,87,0.10)',
+                            borderWidth: 2, tension: 0, fill: !sr.total,
+                            borderRadius: sr.total ? 3 : 0,
+                            maxBarThickness: 24,
+                            pointRadius: sr.total ? 0 : 3, pointHoverRadius: 7,
+                            pointBackgroundColor: '#DDB357', pointBorderColor: '#013334', pointBorderWidth: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                backgroundColor: 'rgba(2,20,20,0.95)', borderColor: 'rgba(221,179,87,0.4)',
+                                borderWidth: 1, titleColor: '#FFC552', bodyColor: '#F2EEE7', padding: 10,
+                                displayColors: false,
+                                callbacks: { label: c => c.parsed.y === null ? 'no data' : sr.fmt(c.parsed.y) }
+                            }
+                        },
+                        scales: {
+                            y: { beginAtZero: true, ticks: { color: 'rgba(242,238,231,0.45)', font: { size: 10 }, maxTicksLimit: 3 },
+                                 grid: { color: 'rgba(221,179,87,0.08)' } },
+                            x: { ticks: { color: 'rgba(242,238,231,0.45)', font: { size: 10 }, maxRotation: 0, autoSkip: false,
+                                 callback: (v, idx) => (idx === 0 || idx === months.length - 1) ? months[idx].split('-')[0].slice(2) + '/' + months[idx].split('-')[1] : '' },
+                                 grid: { display: false } }
+                        }
+                    }
+                }));
+            });
         }
 
         function renderManHoursChart(month) {
@@ -2670,6 +2782,7 @@
             } else if (tabName === 'health') {
                 const monthSelect = document.getElementById('month-selector-h');
                 renderHealthSafetyKPIs(monthSelect.value);
+                renderHsTrendPanels();
                 renderManHoursChart(document.getElementById('month-selector-h') ? document.getElementById('month-selector-h').value : '');
             } else if (tabName === 'sustainability') {
                 const monthSelect = document.getElementById('month-selector-s');
