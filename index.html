@@ -689,6 +689,7 @@
         .chart-scope {
             font-size: 12px; color: rgba(242,238,231,.5); margin-top: -2px; margin-bottom: 12px;
         }
+        .sm-foot { margin-top: 8px; font-size: 11px; color: rgba(242,238,231,.5); text-align: right; }
 </style>
 </head>
 <body>
@@ -1917,6 +1918,22 @@
             });
         }
 
+        // Compliance rate across a span of months: total "Yes" divided by total rows.
+        // NOT the mean of the monthly percentages — that would weight a three-project month
+        // the same as a thirty-project one and quietly overstate quiet months.
+        function complianceRateOverRange(data, months) {
+            if (!months.length) return null;
+            const from = months[0], to = months[months.length - 1];
+            const rows = data.filter(d => {
+                if (!d.date) return false;
+                const mk = d.date.substring(0, 7);
+                return mk >= from && mk <= to;
+            });
+            if (rows.length === 0) return { pct: null, rows: 0, yes: 0 };
+            const yes = rows.filter(d => (d.status || '').toLowerCase() === 'yes').length;
+            return { pct: parseFloat(((yes / rows.length) * 100).toFixed(1)), rows: rows.length, yes: yes };
+        }
+
         // ---- View 2: small multiples ----------------------------------------------
         let compliancePanelCharts = [];
         function renderCompliancePanels(months, series) {
@@ -1932,21 +1949,30 @@
             }
 
             grid.innerHTML = series.map((s, i) => {
-                // Headline shows the most recent month that actually has rows, and says which
-                // month that is — otherwise it reads as a whole-period figure and disagrees
-                // with the KPI card above, which genuinely is one.
+                // The headline is the rate across the SELECTED RANGE, because that is what the
+                // card's heading says it is showing. It previously showed the latest month's
+                // figure, which read as a range summary and was routinely misread as one.
+                const overall = complianceRateOverRange(s.get(), months);
+
                 let latest = null, latestMonth = null;
                 for (let j = s.values.length - 1; j >= 0; j--) {
                     if (s.values[j] !== null) { latest = s.values[j]; latestMonth = months[j]; break; }
                 }
-                const sub = latestMonth
-                    ? complianceLabel(latestMonth) + ' · latest recorded'
-                    : complianceLabel(months[0]) + ' – ' + complianceLabel(months[months.length - 1]);
+
+                const headline = (!overall || overall.pct === null) ? '&mdash;' : overall.pct + '%';
+                const sub = (!overall || overall.pct === null)
+                    ? 'no rows in range'
+                    : overall.yes + ' of ' + overall.rows + ' over ' + months.length + ' months';
+                const foot = latestMonth
+                    ? 'Latest: ' + complianceLabel(latestMonth) + ' &middot; ' + latest + '%'
+                    : '';
+
                 return '<div class="sm-card">' +
                     '<div class="sm-top"><div><div class="sm-name">' + s.label + '</div>' +
                     '<div class="sm-sub">' + sub + '</div></div>' +
-                    '<div class="sm-val">' + (latest === null ? '&mdash;' : latest + '%') + '</div></div>' +
-                    '<div class="sm-chart"><canvas id="sm-canvas-' + i + '"></canvas></div></div>';
+                    '<div class="sm-val">' + headline + '</div></div>' +
+                    '<div class="sm-chart"><canvas id="sm-canvas-' + i + '"></canvas></div>' +
+                    (foot ? '<div class="sm-foot">' + foot + '</div>' : '') + '</div>';
             }).join('');
 
             series.forEach((s, i) => {
